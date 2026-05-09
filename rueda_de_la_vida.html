@@ -1,0 +1,247 @@
+
+<style>
+  h2.sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-sans); }
+  #app { padding: 1.5rem 0; }
+  #wheel-wrap { display: flex; justify-content: center; margin-bottom: 2rem; }
+  canvas#wheel { max-width: 420px; width: 100%; }
+  #sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 2rem; margin-bottom: 1.5rem; }
+  .slider-row { display: flex; flex-direction: column; gap: 4px; }
+  .slider-label { display: flex; justify-content: space-between; align-items: baseline; }
+  .slider-name { font-size: 13px; color: var(--color-text-secondary); }
+  .slider-val { font-size: 14px; font-weight: 500; color: var(--color-text-primary); min-width: 18px; text-align: right; }
+  input[type=range] { width: 100%; }
+  #actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  #save-btn { padding: 8px 20px; font-size: 14px; cursor: pointer; border-radius: var(--border-radius-md); border: 0.5px solid var(--color-border-secondary); background: transparent; color: var(--color-text-primary); }
+  #save-btn:hover { background: var(--color-background-secondary); }
+  #save-btn:active { transform: scale(0.98); }
+  #status { font-size: 13px; color: var(--color-text-secondary); }
+  #score-total { font-size: 13px; color: var(--color-text-secondary); margin-left: auto; }
+  #reflect-btn { padding: 8px 16px; font-size: 13px; cursor: pointer; border-radius: var(--border-radius-md); border: 0.5px solid var(--color-border-secondary); background: transparent; color: var(--color-text-primary); }
+  #reflect-btn:hover { background: var(--color-background-secondary); }
+  #saved-date { font-size: 12px; color: var(--color-text-tertiary); margin-top: 6px; }
+</style>
+
+<div id="app">
+  <h2 class="sr-only">Rueda de la vida interactiva. Ajusta los sliders para puntuar cada dimensión del 1 al 10.</h2>
+  <div id="wheel-wrap">
+    <canvas id="wheel" width="420" height="420" role="img" aria-label="Rueda de la vida con 9 dimensiones"></canvas>
+  </div>
+  <div id="sliders"></div>
+  <div id="actions">
+    <button id="save-btn"><i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar</button>
+    <button id="reflect-btn">Reflexionar ↗</button>
+    <span id="score-total"></span>
+  </div>
+  <div id="status"></div>
+  <div id="saved-date"></div>
+</div>
+
+<script>
+const DIMS = [
+  { key: 'espiritual',    label: 'Espiritual' },
+  { key: 'salud_fisica',  label: 'Salud Física' },
+  { key: 'salud_mental',  label: 'Salud Mental' },
+  { key: 'trabajo',       label: 'Trabajo y Carrera' },
+  { key: 'finanzas',      label: 'Finanzas' },
+  { key: 'altruismo',     label: 'Altruismo' },
+  { key: 'familia',       label: 'Familia' },
+  { key: 'sentimental',   label: 'Sentimental' },
+  { key: 'amistades',     label: 'Amistades' },
+];
+
+const COLORS_LIGHT = [
+  '#7F77DD','#1D9E75','#D85A30','#D4537E','#888780',
+  '#378ADD','#639922','#BA7517','#E24B4A'
+];
+const COLORS_DARK = [
+  '#AFA9EC','#5DCAA5','#F0997B','#ED93B1','#B4B2A9',
+  '#85B7EB','#97C459','#EF9F27','#F09595'
+];
+
+const isDark = () => matchMedia('(prefers-color-scheme: dark)').matches;
+const STORAGE_KEY = 'rueda_vida_v1';
+
+let scores = {};
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      scores = parsed.scores || {};
+      return parsed.date || null;
+    }
+  } catch(e) {}
+  return null;
+}
+
+function save() {
+  const data = { scores, date: new Date().toLocaleString('es-ES') };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  return data.date;
+}
+
+function buildSliders() {
+  const container = document.getElementById('sliders');
+  container.innerHTML = '';
+  DIMS.forEach((d, i) => {
+    const val = scores[d.key] || 5;
+    const row = document.createElement('div');
+    row.className = 'slider-row';
+    row.innerHTML = `
+      <div class="slider-label">
+        <span class="slider-name">${d.label}</span>
+        <span class="slider-val" id="val-${d.key}">${val}</span>
+      </div>
+      <input type="range" min="1" max="10" step="1" value="${val}" id="sl-${d.key}" aria-label="${d.label}" />
+    `;
+    container.appendChild(row);
+    const input = row.querySelector('input');
+    input.addEventListener('input', () => {
+      scores[d.key] = parseInt(input.value);
+      document.getElementById('val-' + d.key).textContent = input.value;
+      drawWheel();
+      updateTotal();
+    });
+  });
+}
+
+function updateTotal() {
+  const vals = DIMS.map(d => scores[d.key] || 5);
+  const avg = (vals.reduce((a,b) => a+b, 0) / vals.length).toFixed(1);
+  document.getElementById('score-total').textContent = `Promedio: ${avg} / 10`;
+}
+
+function drawWheel() {
+  const canvas = document.getElementById('wheel');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const cx = W / 2, cy = H / 2;
+  const R = Math.min(W, H) / 2 - 48;
+  const n = DIMS.length;
+  const dark = isDark();
+  const colors = dark ? COLORS_DARK : COLORS_LIGHT;
+  const bgColor = dark ? '#1c1c1a' : '#ffffff';
+  const gridColor = dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)';
+  const axisColor = dark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)';
+  const labelColor = dark ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.65)';
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = bgColor;
+  ctx.beginPath(); ctx.arc(cx, cy, R + 44, 0, Math.PI * 2); ctx.fill();
+
+  // Grid rings
+  for (let ring = 1; ring <= 10; ring++) {
+    const r = (ring / 10) * R;
+    ctx.beginPath();
+    for (let i = 0; i <= n; i++) {
+      const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+      const x = cx + Math.cos(angle) * r;
+      const y = cy + Math.sin(angle) * r;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = ring === 10 ? axisColor : gridColor;
+    ctx.lineWidth = ring === 10 ? 1 : 0.5;
+    ctx.stroke();
+  }
+
+  // Axis lines
+  for (let i = 0; i < n; i++) {
+    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(angle) * R, cy + Math.sin(angle) * R);
+    ctx.strokeStyle = axisColor;
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+
+  // Filled polygon
+  ctx.beginPath();
+  DIMS.forEach((d, i) => {
+    const score = scores[d.key] || 5;
+    const r = (score / 10) * R;
+    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const x = cx + Math.cos(angle) * r;
+    const y = cy + Math.sin(angle) * r;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.closePath();
+  ctx.fillStyle = dark ? 'rgba(127,119,221,0.20)' : 'rgba(127,119,221,0.15)';
+  ctx.fill();
+  ctx.strokeStyle = dark ? 'rgba(175,169,236,0.8)' : 'rgba(83,74,183,0.7)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Dots at score points
+  DIMS.forEach((d, i) => {
+    const score = scores[d.key] || 5;
+    const r = (score / 10) * R;
+    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const x = cx + Math.cos(angle) * r;
+    const y = cy + Math.sin(angle) * r;
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = colors[i];
+    ctx.fill();
+  });
+
+  // Labels
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  DIMS.forEach((d, i) => {
+    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const labelR = R + 28;
+    const lx = cx + Math.cos(angle) * labelR;
+    const ly = cy + Math.sin(angle) * labelR;
+    const score = scores[d.key] || 5;
+
+    const words = d.label.split(' ');
+    const lineH = 13;
+    const totalH = words.length * lineH;
+    const startY = ly - totalH / 2 + lineH / 2;
+
+    ctx.font = '500 11px ' + getComputedStyle(document.body).fontFamily;
+    ctx.fillStyle = labelColor;
+    words.forEach((w, wi) => {
+      ctx.fillText(w, lx, startY + wi * lineH);
+    });
+
+    // Score badge
+    const scoreAngle = angle;
+    const badgeR = R + 0;
+    const bx = cx + Math.cos(scoreAngle) * (score / 10 * R);
+    const by = cy + Math.sin(scoreAngle) * (score / 10 * R);
+  });
+}
+
+// Init
+const savedDate = load();
+DIMS.forEach(d => { if (!scores[d.key]) scores[d.key] = 5; });
+buildSliders();
+drawWheel();
+updateTotal();
+
+if (savedDate) {
+  document.getElementById('saved-date').textContent = 'Última vez guardado: ' + savedDate;
+}
+
+document.getElementById('save-btn').addEventListener('click', () => {
+  const date = save();
+  const status = document.getElementById('status');
+  const dateEl = document.getElementById('saved-date');
+  status.textContent = 'Guardado correctamente';
+  dateEl.textContent = 'Última vez guardado: ' + date;
+  setTimeout(() => { status.textContent = ''; }, 2500);
+});
+
+document.getElementById('reflect-btn').addEventListener('click', () => {
+  const lines = DIMS.map(d => `${d.label}: ${scores[d.key] || 5}/10`).join(', ');
+  sendPrompt('Mis puntuaciones en la Rueda de la Vida son — ' + lines + '. Ayúdame a reflexionar sobre mis resultados: ¿qué áreas están más desequilibradas, cuáles son mis fortalezas, y qué acciones concretas podría tomar para mejorar mi bienestar integral?');
+});
+
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { drawWheel(); });
+</script>
